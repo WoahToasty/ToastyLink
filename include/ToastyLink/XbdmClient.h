@@ -23,6 +23,7 @@
 #pragma once
 
 #include <cstdint>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -64,6 +65,20 @@ struct MemoryRegion {
     std::string raw; // original line, always populated
 };
 
+struct DirEntry {
+    std::string name;
+    uint64_t size = 0;
+    bool isDirectory = false;
+    std::string raw; // original line, always populated
+};
+
+// XbdmClient is safe to call from multiple threads: every public method
+// that touches the socket or shared state takes an internal mutex, so a
+// background thread (e.g. FreezeEngine) and the interactive shell can
+// share one connection without corrupting the protocol stream. Each call
+// still fully owns the socket for the duration of its request/response
+// exchange, so calls from different threads are simply serialized, not
+// parallelized.
 class XbdmClient {
 public:
     XbdmClient() = default;
@@ -72,10 +87,10 @@ public:
     // true on success. On failure, LastError() explains why.
     bool Connect(const std::string& host, uint16_t port = 730);
     void Disconnect();
-    bool IsConnected() const { return m_socket.IsOpen(); }
+    bool IsConnected() const;
 
-    const std::string& Greeting() const { return m_greeting; }
-    const std::string& LastError() const { return m_lastError; }
+    std::string Greeting() const;
+    std::string LastError() const;
 
     // Sends a raw command line and parses the response according to the
     // framing rules described above. This is always safe to call with any
@@ -116,7 +131,24 @@ public:
     // pass extra args) -> true if the console acknowledged the request.
     bool Reboot(const std::string& mode = "");
 
+    // "dirlist name=\"<path>\"" -> directory listing. `path` should use
+    // Xbox-style drive syntax, e.g. "hdd:\\" or "usb0:\\Games".
+    std::optional<std::vector<DirEntry>> DirList(const std::string& path);
+
+    // "delete name=\"<path>\" [dir]" -> removes a file, or a directory if
+    // isDirectory is true. Returns true on success.
+    bool Delete(const std::string& path, bool isDirectory = false);
+
+    // "mkdir name=\"<path>\"" -> creates a directory.
+    bool MakeDirectory(const std::string& path);
+
+    // "notify text=\"<msg>\"" -> best-effort on-screen popup. Support
+    // varies by dashboard/kernel build; a false return usually just means
+    // the running dashboard doesn't implement it, not a connection problem.
+    bool Notify(const std::string& text);
+
 private:
+    mutable std::mutex m_mutex;
     TcpSocket m_socket;
     std::string m_greeting;
     std::string m_lastError;

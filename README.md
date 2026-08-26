@@ -1,36 +1,58 @@
 # ToastyLink
 
-A from-scratch C++17 client for **XBDM** (Xbox Debug Monitor), the network
-control/debug protocol exposed by Xbox 360 kernels and dashboards that have
-debugging enabled. On a softmodded console (RGH/JTAG running a custom
-dashboard such as Aurora, Freestyle Dash, or XeXMenu with Dashlaunch) this
-is the same class of protocol tools like Xbox 360 Neighborhood or Cheat
-Engine 360 talk to — ToastyLink implements the wire protocol itself, in
-plain C++, with no third-party SDK.
+A from-scratch C++17 **trainer and debug toolkit** for **XBDM** (Xbox Debug
+Monitor), the network control/debug protocol exposed by Xbox 360 kernels
+and dashboards that have debugging enabled. On a softmodded console
+(RGH/JTAG running a custom dashboard such as Aurora, Freestyle Dash, or
+XeXMenu with Dashlaunch) this is the same class of protocol tools like
+Xbox 360 Neighborhood or Cheat Engine 360 talk to — ToastyLink implements
+the wire protocol itself, in plain C++, with no third-party SDK.
 
-It gives you an interactive shell (and a scriptable one-shot CLI mode) for:
+It's built around the workflow the RGH/JTAG community actually uses day to
+day: find an address, make sure it survives a reboot, freeze it, share the
+result.
 
-- Reading and writing console memory
-- Listing loaded modules, running threads, and mapped memory regions
-- Inspecting the currently running title
-- AOB (array-of-bytes) pattern scanning over a memory range or the whole
-  mapped address space, with wildcard bytes
-- Sending **any** raw XBDM command and seeing the exact response — the
-  protocol framing is correct regardless of which command you send, so
-  the tool stays useful even for commands it doesn't have a dedicated
-  wrapper for
+- **Typed, endian-correct memory access** — `read`/`write` for i8 through
+  f64, handled explicitly for Xenon's big-endian PowerPC byte order (the
+  #1 source of silent bugs when a little-endian PC talks to it)
+- **Pointer chains** — `base,off1,off2,...` resolves live against the
+  console, so an address survives game restarts instead of rotting the
+  moment ASLR-free-but-dynamic allocations move
+- **Cheat Engine-style progressive value scanning** (`vscan`) — first
+  scan captures every candidate matching a value/type over a range, then
+  each `vscan next changed|unchanged|increased|decreased|exact` re-reads
+  and narrows the set, exactly how you find an unknown health/ammo/
+  currency address by playing between scans
+- **A real freeze/trainer engine** (`freeze`) — named entries with a
+  literal address or pointer chain, continuously rewritten by a
+  background thread, saved and loaded as small **JSON cheat-table files**
+  you can hand to someone else running ToastyLink
+- **AOB (array-of-bytes) pattern scanning** with wildcards, over a range
+  or the whole mapped address space
+- Module/thread/memory-region listing, filesystem browsing
+  (`dirlist`/`mkdir`/`delete`), best-effort on-screen `notify`, and a
+  console address book so you can `connect myrgh` instead of memorizing
+  an IP
+- Batch scripting (`--script file.txt`) so a whole setup — attach,
+  resolve pointers, load a cheat table, start freezing — is one command
+- Raw XBDM passthrough for anything without a dedicated wrapper — the
+  protocol framing is correct regardless of which command you send
 
-No game-specific memory offsets are baked in anywhere. Offsets are
-build-specific and go stale the moment a title updates, so instead of
-shipping a pile of addresses that would rot on day one, ToastyLink gives
-you the primitives (`getmem`, `setmem`, `scan`) to find and use your own.
+No game-specific memory offsets ship in the code. Offsets are
+build-specific and go stale the moment a title updates, so instead of a
+pile of addresses that would rot on day one, ToastyLink gives you the
+primitives — `scan`, `vscan`, pointer chains — to find and pin down your
+own, and a file format (the cheat table) to save and share what you find.
 
 ## Why this exists
 
 Most public XBDM tooling is old, closed-source, C#/.NET, or bundled into
-a much larger GUI app. ToastyLink is a small, readable, single-purpose C++
-implementation of the protocol itself — useful on its own, and as a
-reference for anyone writing their own Xbox 360 tooling.
+a much larger GUI app, and almost none of it does progressive value
+scanning or pointer-chain freezing without a much heavier Cheat Engine
+setup on top. ToastyLink is a small, readable, single-purpose C++
+implementation of the protocol *and* the trainer workflow on top of it —
+useful on its own, and as a reference for anyone writing their own Xbox
+360 tooling.
 
 ## Requirements
 
@@ -38,7 +60,9 @@ reference for anyone writing their own Xbox 360 tooling.
 - An Xbox 360 with a softmod (RGH or JTAG) running a dashboard with XBDM
   enabled (e.g. Dashlaunch's `xbdm` hook), **or** a devkit-mode console.
   XBDM listens on **TCP port 730** by default.
-- A C++17 compiler + CMake 3.15+ to build
+- A C++17 compiler + CMake 3.15+ to build. Uses `std::thread`/
+  `std::filesystem` from the standard library only — no external
+  dependencies.
 
 ## Building
 
@@ -49,8 +73,7 @@ cmake --build build --config Release
 
 This produces `toastylink` (or `toastylink.exe` on Windows) in `build/`.
 Tested with MSVC (Visual Studio 2022 toolset) on Windows; it also builds
-clean with GCC/Clang on Linux/macOS since it only uses the standard
-library plus BSD sockets / Winsock.
+clean with GCC/Clang on Linux/macOS.
 
 ## Usage
 
@@ -60,30 +83,116 @@ toastylink 192.168.1.50
 
 # One-shot: run a single command and exit
 toastylink 192.168.1.50 -- dbgname
-toastylink 192.168.1.50 730 -- getmem 0x82000000 0x100
+
+# Batch: run every line of a script and exit
+toastylink 192.168.1.50 --script trainer.txt
+
+# Nicknames saved with 'consoles add' work anywhere an IP does
+toastylink myrgh -- dbgname
 ```
 
-### Shell commands
+### Quick tour: finding and freezing a value
+
+```
+toastylink> vscan new i32 0x82000000 0x200000 exact 100
+scanning 0x82000000 + 0x00200000 as i32...
+414 candidate(s). Play/change the value, then run 'vscan next ...'.
+
+(take damage in-game, so the value is no longer 100)
+
+toastylink> vscan next changed
+6 candidate(s) remaining.
+
+(take damage again)
+
+toastylink> vscan next decreased
+1 candidate(s) remaining.
+
+toastylink> vscan list
+0x82045a10 = 73
+1 of 1 candidate(s) shown
+
+toastylink> freeze add health i32 0x82045a10 100
+added
+toastylink> freeze start
+freeze engine started (interval 200ms)
+```
+
+That address will move next time you restart the game. To pin it down
+with a pointer chain instead (so it survives restarts), walk backwards
+from a module's static data with a memory-analysis tool of your choice,
+then use the chain directly:
+
+```
+toastylink> read i32 0x82000100,0x18,0x4
+0x820abcd0 = 100
+toastylink> freeze add health i32 0x82000100,0x18,0x4 100
+```
+
+`base,off1,off2,...`: `base` is the address of the first pointer; each
+offset reads the pointer at the current address and adds the offset,
+producing the next address to dereference (or, on the last offset, the
+final target address).
+
+### Command reference
 
 | Command | Description |
 |---|---|
+| `connect <ip\|nickname> [port]` | Disconnect and connect to a different console |
+| `consoles add/list/rm` | Manage the saved console address book |
 | `dbgname` | Show the console's debug name |
 | `modules` | List loaded modules (name, base, size) |
 | `threads` | List running thread IDs |
 | `walkmem` | List mapped memory regions |
-| `getmem <addr> <len>` | Read memory; unmapped bytes print as `??` |
-| `setmem <addr> <hexbytes>` | Write bytes, e.g. `setmem 0x82000000 DEADBEEF` |
 | `xbeinfo` | Info about the currently running title |
-| `scan <addr> <len> <pattern>` | AOB scan a range, e.g. `scan 0x82000000 0x10000 48 65 ?? 6F` |
-| `scanall <pattern>` | AOB scan every mapped region (slower) |
 | `reboot [title\|cold]` | Reboot the console |
+| `getmem <addr> <len>` | Read raw bytes; unmapped bytes print as `??` |
+| `setmem <addr> <hexbytes>` | Write raw bytes |
+| `read <type> <addr>` | Typed read; `<addr>` may be a pointer chain |
+| `write <type> <addr> <value>` | Typed write; `<addr>` may be a pointer chain |
+| `scan <addr> <len> <pattern>` | AOB scan a range, e.g. `scan 0x82000000 0x10000 48 65 ?? 6F` |
+| `scanall <pattern>` | AOB scan every mapped region |
+| `vscan new/next/list/reset` | Progressive value scan (see above) |
+| `freeze add/rm/enable/disable/list/start/stop/save/load` | Trainer engine (see above) |
+| `dirlist <path>` (alias `ls`) | Browse a drive/directory |
+| `mkdir <path>` | Create a directory |
+| `delete <path> [dir]` (alias `rm`) | Delete a file or directory |
+| `notify <text>` | Best-effort on-screen popup |
+| `sleep <ms>` | Pause (useful in scripts) |
 | `raw <xbdm command...>` | Send any raw XBDM command, print the reply verbatim |
 | `help` | List commands |
 | `quit` / `exit` | Disconnect and exit |
 
-Any input that isn't one of the above is forwarded to the console as a raw
-XBDM command automatically, so the shell doubles as a general XBDM
-terminal.
+Types for `read`/`write`/`vscan`/`freeze`: `i8 u8 i16 u16 i32 u32 i64 u64
+f32 f64`. Anything not in the table above is forwarded to the console as
+a raw XBDM command automatically.
+
+### Cheat tables
+
+`freeze save mytitle.json` writes every entry as JSON:
+
+```json
+[
+  {
+    "name": "health",
+    "address": "0x82000100,0x18,0x4",
+    "type": "i32",
+    "value": "100",
+    "enabled": true
+  }
+]
+```
+
+`freeze load mytitle.json` reads it back (merging by name). This is a
+plain text format anyone can hand-edit or generate — a shareable trainer
+definition for a given title that anyone running ToastyLink can load.
+
+### Batch scripts
+
+`toastylink <console> --script setup.txt` runs one shell command per
+non-empty line (lines starting with `#` are comments) — the same commands
+you'd type interactively, so a whole session (connect, load a cheat
+table, start freezing) is reproducible as one file.
 
 ## How it works
 
@@ -92,20 +201,41 @@ terminal.
 - **`XbdmClient`** — implements XBDM's line-oriented framing: a command is
   one CRLF-terminated line; the reply starts with a `<code>- <message>`
   status line, and a `2xx` "multiline" reply is followed by additional
-  lines up to a terminating `.` line. This framing is implemented once,
-  correctly, and everything else is built on it — including
-  `SendCommand()`, which is exposed directly for any command without a
+  lines up to a terminating `.` line. Thread-safe (internally
+  mutex-guarded) so the freeze engine's background thread and the shell
+  can share one connection without corrupting the protocol stream.
+  `SendCommand()` is exposed directly for any command without a
   dedicated wrapper.
-- **`MemoryScanner`** — chunked, overlap-aware AOB scanning built purely
-  on top of `GetMemory()`/`WalkMemory()`, so it works against any console
-  regardless of protocol-detail edge cases in higher-level parsing.
-- **`Shell`** — the REPL / one-shot command dispatcher.
+- **`TypedValue`** — packs/unpacks `i8..f64` to/from Xenon's big-endian
+  wire format by hand (bit shifts, not `memcpy`), so it's correct
+  regardless of the host machine's own endianness.
+- **`AddressResolver`** — resolves `base,off1,off2,...` pointer chains
+  live against the console.
+- **`MemoryScanner`** — chunked, overlap-aware AOB scanning.
+- **`ValueScanner`** — progressive value scanning; re-reads on `vscan
+  next` are batched by merging nearby candidate addresses into single
+  bulk reads rather than one round trip per address.
+- **`FreezeEngine`** — a background `std::thread` that re-resolves each
+  entry's address (so pointer chains keep working across the target
+  moving) and rewrites its value on an interval; entries persist as JSON
+  via a small hand-rolled parser/writer (`Json.h`/`.cpp`, no external
+  dependency).
+- **`ConsoleBook`** — a JSON-backed nickname → IP/port address book.
+- **`Shell`** — the REPL / one-shot / batch-script command dispatcher.
 
 ## Scope and intent
 
 This is offline/homebrew tooling for **your own** console: memory
-inspection, debugging, and scripting against a devkit or a private
-RGH/JTAG box. It talks to nothing but the IP address you give it.
+inspection, trainers, and debugging against a devkit or a private
+RGH/JTAG box, playable offline or in private lobbies. It talks to
+nothing but the IP address you give it, and file get/put (bulk transfer
+of files to/from the console's filesystem) is intentionally not
+implemented — that command's binary framing varies enough between XBDM
+implementations that shipping a guessed version risked silently
+corrupting the exact file you're trying to deploy. `dirlist`/`mkdir`/
+`delete` (all plain text protocol, well-documented) are implemented; for
+anything else filesystem-related, `raw` gets you there to inspect the
+exact reply your console's XBDM sends before relying on it.
 
 ## License
 

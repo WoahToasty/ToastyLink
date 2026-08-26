@@ -9,6 +9,8 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
+find_package(Threads REQUIRED)
+
 add_executable(toastylink
     src/main.cpp
     src/Socket.cpp
@@ -16,12 +18,25 @@ add_executable(toastylink
     src/HexUtils.cpp
     src/MemoryScanner.cpp
     src/Shell.cpp
+    src/TypedValue.cpp
+    src/AddressResolver.cpp
+    src/ValueScanner.cpp
+    src/Json.cpp
+    src/FreezeEngine.cpp
+    src/ConsoleBook.cpp
 )
 
 target_include_directories(toastylink PRIVATE include)
 
+target_link_libraries(toastylink PRIVATE Threads::Threads)
+
 if(WIN32)
     target_link_libraries(toastylink PRIVATE ws2_32)
+endif()
+
+# GCC before 9 ships std::filesystem in a separate archive.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9.0)
+    target_link_libraries(toastylink PRIVATE stdc++fs)
 endif()
 
 if(MSVC)

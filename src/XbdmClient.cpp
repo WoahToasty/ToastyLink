@@ -76,6 +76,7 @@ std::optional<std::string> FindStr(const std::vector<std::pair<std::string, std:
 } // namespace
 
 bool XbdmClient::Connect(const std::string& host, uint16_t port) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     m_lastError.clear();
     m_greeting.clear();
 
@@ -95,7 +96,25 @@ bool XbdmClient::Connect(const std::string& host, uint16_t port) {
     return true;
 }
 
-void XbdmClient::Disconnect() { m_socket.Close(); }
+void XbdmClient::Disconnect() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_socket.Close();
+}
+
+bool XbdmClient::IsConnected() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_socket.IsOpen();
+}
+
+std::string XbdmClient::Greeting() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_greeting;
+}
+
+std::string XbdmClient::LastError() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_lastError;
+}
 
 bool XbdmClient::ReadStatusLine(XbdmResponse& resp) {
     std::string line;
@@ -138,6 +157,7 @@ void XbdmClient::ReadMultilineBody(XbdmResponse& resp) {
 }
 
 XbdmResponse XbdmClient::SendCommand(const std::string& command) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     XbdmResponse resp;
     if (!m_socket.IsOpen()) {
         m_lastError = "not connected";
@@ -266,6 +286,43 @@ bool XbdmClient::Reboot(const std::string& mode) {
     std::string cmd = "reboot";
     if (!mode.empty()) cmd += " " + mode;
     XbdmResponse resp = SendCommand(cmd);
+    return resp.success;
+}
+
+std::optional<std::vector<DirEntry>> XbdmClient::DirList(const std::string& path) {
+    XbdmResponse resp = SendCommand("dirlist name=\"" + path + "\"");
+    if (!resp.success) return std::nullopt;
+
+    std::vector<DirEntry> out;
+    for (auto& line : resp.lines) {
+        auto kv = ParseKeyValues(line);
+        DirEntry de;
+        de.raw = line;
+        if (auto v = FindStr(kv, "name")) de.name = *v;
+        uint64_t sizeHi = FindHex(kv, "sizehi").value_or(0);
+        uint64_t sizeLo = FindHex(kv, "sizelo").value_or(0);
+        de.size = (sizeHi << 32) | sizeLo;
+        uint64_t attrs = FindHex(kv, "attributes").value_or(0);
+        de.isDirectory = (attrs & 0x10) != 0; // FILE_ATTRIBUTE_DIRECTORY
+        out.push_back(std::move(de));
+    }
+    return out;
+}
+
+bool XbdmClient::Delete(const std::string& path, bool isDirectory) {
+    std::string cmd = "delete name=\"" + path + "\"";
+    if (isDirectory) cmd += " dir";
+    XbdmResponse resp = SendCommand(cmd);
+    return resp.success;
+}
+
+bool XbdmClient::MakeDirectory(const std::string& path) {
+    XbdmResponse resp = SendCommand("mkdir name=\"" + path + "\"");
+    return resp.success;
+}
+
+bool XbdmClient::Notify(const std::string& text) {
+    XbdmResponse resp = SendCommand("notify text=\"" + text + "\"");
     return resp.success;
 }
 
