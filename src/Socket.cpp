@@ -11,8 +11,11 @@
     static constexpr socket_t kInvalidSocket = INVALID_SOCKET;
 #else
     #include <sys/socket.h>
+    #include <sys/select.h>
+    #include <sys/time.h>
     #include <netdb.h>
     #include <unistd.h>
+    #include <fcntl.h>
     #include <cerrno>
     #include <cstring>
     using socket_t = int;
@@ -93,6 +96,114 @@ bool TcpSocket::Connect(const std::string& host, uint16_t port, std::string* err
     m_open = true;
     m_recvBuf.clear();
     return true;
+}
+
+bool TcpSocket::ConnectWithTimeout(const std::string& host, uint16_t port, int timeoutMs,
+                                    std::string* errorOut) {
+    Close();
+
+    struct addrinfo hints;
+    std::memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+
+    struct addrinfo* result = nullptr;
+    const std::string portStr = std::to_string(port);
+    int rc = getaddrinfo(host.c_str(), portStr.c_str(), &hints, &result);
+    if (rc != 0 || result == nullptr) {
+        if (errorOut) *errorOut = "failed to resolve host '" + host + "'";
+        return false;
+    }
+
+    socket_t fd = kInvalidSocket;
+    bool connected = false;
+
+    for (struct addrinfo* attempt = result; attempt != nullptr && !connected; attempt = attempt->ai_next) {
+        fd = socket(attempt->ai_family, attempt->ai_socktype, attempt->ai_protocol);
+        if (fd == kInvalidSocket) continue;
+
+#ifdef _WIN32
+        u_long mode = 1;
+        ioctlsocket(fd, FIONBIO, &mode);
+#else
+        int flags = fcntl(fd, F_GETFL, 0);
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+#endif
+
+        int cr = connect(fd, attempt->ai_addr, static_cast<int>(attempt->ai_addrlen));
+        bool inProgress =
+#ifdef _WIN32
+            (cr != 0 && WSAGetLastError() == WSAEWOULDBLOCK);
+#else
+            (cr != 0 && errno == EINPROGRESS);
+#endif
+
+        if (cr == 0) {
+            connected = true;
+        } else if (inProgress) {
+            fd_set writeSet, errSet;
+            FD_ZERO(&writeSet);
+            FD_ZERO(&errSet);
+            FD_SET(fd, &writeSet);
+            FD_SET(fd, &errSet);
+            struct timeval tv;
+            tv.tv_sec = timeoutMs / 1000;
+            tv.tv_usec = (timeoutMs % 1000) * 1000;
+
+            int sel = select(static_cast<int>(fd) + 1, nullptr, &writeSet, &errSet, &tv);
+            if (sel > 0 && FD_ISSET(fd, &writeSet) && !FD_ISSET(fd, &errSet)) {
+                int soErr = 0;
+#ifdef _WIN32
+                int errLen = sizeof(soErr);
+                getsockopt(fd, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&soErr), &errLen);
+#else
+                socklen_t errLen = sizeof(soErr);
+                getsockopt(fd, SOL_SOCKET, SO_ERROR, &soErr, &errLen);
+#endif
+                connected = (soErr == 0);
+            }
+        }
+
+        if (!connected) {
+            CloseRaw(fd);
+            fd = kInvalidSocket;
+        }
+    }
+    freeaddrinfo(result);
+
+    if (!connected) {
+        if (errorOut) *errorOut = "no response from " + host + ":" + portStr;
+        return false;
+    }
+
+    // Back to blocking mode for normal send/recv use after a successful connect.
+#ifdef _WIN32
+    u_long mode = 0;
+    ioctlsocket(fd, FIONBIO, &mode);
+#else
+    int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+#endif
+
+    m_fd = static_cast<intptr_t>(fd);
+    m_open = true;
+    m_recvBuf.clear();
+    return true;
+}
+
+void TcpSocket::SetReceiveTimeout(int timeoutMs) {
+    if (!m_open) return;
+    socket_t fd = static_cast<socket_t>(m_fd);
+#ifdef _WIN32
+    DWORD ms = static_cast<DWORD>(timeoutMs);
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&ms), sizeof(ms));
+#else
+    struct timeval tv;
+    tv.tv_sec = timeoutMs / 1000;
+    tv.tv_usec = (timeoutMs % 1000) * 1000;
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+#endif
 }
 
 void TcpSocket::Close() {

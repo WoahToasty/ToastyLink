@@ -33,6 +33,11 @@ public:
     // on Windows); created on first Save() if missing.
     static std::string DefaultPath();
 
+    // ~/.toastylink (or %USERPROFILE%\.toastylink on Windows) -- the base
+    // directory DefaultPath() lives in, also used for saved cheat/patch
+    // tables (see Shell's `freeze autosave`/`patch autosave`).
+    static std::string ConfigDir();
+
 private:
     std::vector<ConsoleEntry> m_entries;
 };

@@ -8,6 +8,7 @@
 
 #include "ToastyLink/ConsoleBook.h"
 #include "ToastyLink/FreezeEngine.h"
+#include "ToastyLink/PatchEngine.h"
 #include "ToastyLink/ValueScanner.h"
 #include "ToastyLink/XbdmClient.h"
 
@@ -29,7 +30,10 @@ private:
     XbdmClient& m_client;
     ValueScanner m_scanner;
     FreezeEngine m_freeze;
+    PatchEngine m_patch;
     ConsoleBook m_consoleBook;
+
+    std::string TitleFingerprint(); // stable-ish filename-safe id for the running title
 
     void PrintHelp() const;
     void CmdRaw(const std::vector<std::string>& tokens);
@@ -58,6 +62,10 @@ private:
     void CmdConsoles(const std::vector<std::string>& tokens);
     void CmdConnect(const std::vector<std::string>& tokens);
     void CmdSleep(const std::vector<std::string>& tokens);
+    void CmdDiscover(const std::vector<std::string>& tokens);
+    void CmdAsm(const std::vector<std::string>& tokens);
+    void CmdPatch(const std::vector<std::string>& tokens);
+    void CmdWatch(const std::vector<std::string>& tokens);
 };
 
 std::vector<std::string> Tokenize(const std::string& line);

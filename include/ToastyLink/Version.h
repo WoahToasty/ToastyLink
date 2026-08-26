@@ -1,5 +1,5 @@
 #pragma once
 
 namespace tl {
-inline constexpr const char* kVersion = "0.2.0";
+inline constexpr const char* kVersion = "0.3.0";
 } // namespace tl

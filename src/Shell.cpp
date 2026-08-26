@@ -4,12 +4,19 @@
 #include <cstdio>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <sstream>
 #include <thread>
 
 #include "ToastyLink/AddressResolver.h"
+#include "ToastyLink/Assembler.h"
+#include "ToastyLink/Discovery.h"
 #include "ToastyLink/HexUtils.h"
 #include "ToastyLink/MemoryScanner.h"
+
+#include <algorithm>
+#include <cctype>
+#include <filesystem>
 
 namespace tl {
 
@@ -35,13 +42,47 @@ std::vector<std::string> Tokenize(const std::string& line) {
     return out;
 }
 
-Shell::Shell(XbdmClient& client) : m_client(client), m_scanner(client), m_freeze(client) {
+Shell::Shell(XbdmClient& client) : m_client(client), m_scanner(client), m_freeze(client), m_patch(client) {
     m_consoleBook.Load(ConsoleBook::DefaultPath());
+}
+
+std::string Shell::TitleFingerprint() {
+    std::string name = "unknowntitle";
+    if (auto info = m_client.GetRunningXbeInfo()) {
+        for (auto& line : *info) {
+            size_t pos = line.find("name=\"");
+            if (pos != std::string::npos) {
+                size_t start = pos + 6;
+                size_t end = line.find('"', start);
+                if (end != std::string::npos) { name = line.substr(start, end - start); break; }
+            }
+        }
+    }
+
+    uint64_t checksum = 0, timestamp = 0;
+    if (auto mods = m_client.ListModules()) {
+        uint64_t bestSize = 0;
+        for (auto& m : *mods) {
+            if (m.size > bestSize) { bestSize = m.size; checksum = m.checksum; timestamp = m.timestamp; }
+        }
+    }
+
+    std::string safe;
+    for (char c : name) {
+        safe.push_back(std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
+    }
+    if (safe.empty()) safe = "unknowntitle";
+
+    char suffix[32];
+    std::snprintf(suffix, sizeof(suffix), "_%08llX%08llX", static_cast<unsigned long long>(checksum),
+                  static_cast<unsigned long long>(timestamp));
+    return safe + suffix;
 }
 
 void Shell::PrintHelp() const {
     std::cout <<
         "Connection & console book:\n"
+        "  discover <subnet-prefix>         find XBDM consoles on your LAN, e.g. discover 192.168.1\n"
         "  connect <ip|nickname> [port]     disconnect and connect to a different console\n"
         "  consoles add <name> <ip> [port]  save a console under a nickname\n"
         "  consoles list                    list saved consoles\n"
@@ -62,6 +103,7 @@ void Shell::PrintHelp() const {
         "Typed memory (addr accepts a pointer chain: base,off1,off2,...):\n"
         "  read <type> <addr>               e.g. read f32 0x82000000  or  read i32 0x82000000,10,4\n"
         "  write <type> <addr> <value>      e.g. write i32 0x82000000 9999\n"
+        "  watch <type> <addr> [count] [ms] repeatedly re-read a value (default 20x @ 500ms)\n"
         "  types: i8 u8 i16 u16 i32 u32 i64 u64 f32 f64\n"
         "\n"
         "AOB pattern scan:\n"
@@ -82,6 +124,15 @@ void Shell::PrintHelp() const {
         "  freeze list\n"
         "  freeze start [intervalMs]   /   freeze stop\n"
         "  freeze save <file.json>     /   freeze load <file.json>\n"
+        "  freeze autosave / autoload  save/load under a name derived from the running title\n"
+        "\n"
+        "Code patches (PPC/Xenon; one-shot install with tracked, revertible original bytes):\n"
+        "  asm nop | asm blr | asm b <from> <target> | asm bl <from> <target> | asm li <reg> <value>\n"
+        "  patch install <name> <addr> hex <hexbytes>\n"
+        "  patch install <name> <addr> asm <nop|blr|b <target>|bl <target>|li <reg> <value>>\n"
+        "  patch revert <name>  /  patch reinstall <name>  /  patch rm <name>\n"
+        "  patch list\n"
+        "  patch save <file.json>      /   patch load <file.json>\n"
         "\n"
         "Filesystem:\n"
         "  dirlist <path>  (alias: ls)      e.g. dirlist hdd:\\  or  ls usb0:\\Games\n"
@@ -437,6 +488,24 @@ void Shell::CmdFreeze(const std::vector<std::string>& tokens) {
         return;
     }
 
+    if (sub == "autosave") {
+        std::string dir = ConsoleBook::ConfigDir() + "/tables";
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        std::string path = dir + "/" + TitleFingerprint() + ".json";
+        bool ok = m_freeze.SaveToFile(path);
+        std::cout << (ok ? ("saved to " + path) : "error: could not write file") << "\n";
+        return;
+    }
+
+    if (sub == "autoload") {
+        std::string path = ConsoleBook::ConfigDir() + "/tables/" + TitleFingerprint() + ".json";
+        std::string err;
+        bool ok = m_freeze.LoadFromFile(path, &err);
+        std::cout << (ok ? ("loaded from " + path) : ("error: " + err)) << "\n";
+        return;
+    }
+
     std::cout << "error: unknown freeze subcommand '" << sub << "'\n";
 }
 
@@ -547,6 +616,166 @@ void Shell::CmdSleep(const std::vector<std::string>& tokens) {
     std::this_thread::sleep_for(std::chrono::milliseconds(*ms));
 }
 
+void Shell::CmdDiscover(const std::vector<std::string>& tokens) {
+    if (tokens.empty()) {
+        std::cout << "usage: discover <subnet-prefix>   e.g. discover 192.168.1\n";
+        return;
+    }
+    std::cout << "scanning " << tokens[0] << ".1-254 on port 730...\n";
+    // DiscoverConsoles runs many worker threads concurrently, so this
+    // callback can be invoked from several of them at once -- guard the
+    // shared "last printed percent" state and the actual write together,
+    // or concurrent writes to std::cout interleave into garbage.
+    std::mutex progressMutex;
+    int lastPct = -1;
+    auto found = DiscoverConsoles(tokens[0], 730, 300, 64, [&](int scanned, int total) {
+        std::lock_guard<std::mutex> lock(progressMutex);
+        int pct = total > 0 ? (scanned * 100) / total : 100;
+        if (pct != lastPct) { lastPct = pct; std::cout << "\r  " << pct << "%   " << std::flush; }
+    });
+    std::cout << "\r" << found.size() << " console(s) found:\n";
+    for (auto& c : found) std::cout << "  " << c.host << "  (" << c.greeting << ")\n";
+    if (!found.empty()) {
+        std::cout << "tip: 'connect " << found[0].host << "' or 'consoles add <name> " << found[0].host << "'\n";
+    }
+}
+
+void Shell::CmdAsm(const std::vector<std::string>& tokens) {
+    if (tokens.empty()) {
+        std::cout << "usage: asm nop | asm blr | asm b <from> <target> | asm bl <from> <target> | asm li <reg> <value>\n";
+        return;
+    }
+    const std::string& op = tokens[0];
+    std::optional<std::vector<uint8_t>> bytes;
+    std::string err;
+
+    if (op == "nop") {
+        bytes = AssembleNop();
+    } else if (op == "blr") {
+        bytes = AssembleBlr();
+    } else if (op == "b" || op == "bl") {
+        if (tokens.size() < 3) { std::cout << "usage: asm " << op << " <from> <target>\n"; return; }
+        auto from = ParseIntArg(tokens[1]);
+        auto target = ParseIntArg(tokens[2]);
+        if (!from || !target) { std::cout << "error: could not parse from/target\n"; return; }
+        bytes = AssembleBranch(*from, *target, op == "bl", &err);
+    } else if (op == "li") {
+        if (tokens.size() < 3) { std::cout << "usage: asm li <reg 0-31> <value>\n"; return; }
+        bytes = AssembleLine(tokens, 0, &err);
+    } else {
+        std::cout << "error: unknown mnemonic '" << op << "' (supported: nop, blr, b, bl, li)\n";
+        return;
+    }
+
+    if (!bytes) { std::cout << "error: " << err << "\n"; return; }
+    std::cout << BytesToHex(*bytes) << "\n";
+}
+
+void Shell::CmdPatch(const std::vector<std::string>& tokens) {
+    if (tokens.empty()) {
+        std::cout << "usage: patch <install|revert|reinstall|rm|list|save|load> ...  (see 'help')\n";
+        return;
+    }
+    const std::string& sub = tokens[0];
+
+    if (sub == "install") {
+        if (tokens.size() < 4) {
+            std::cout << "usage: patch install <name> <addr> hex <hexbytes>\n"
+                          "       patch install <name> <addr> asm <nop|blr|b <target>|bl <target>|li <reg> <value>>\n";
+            return;
+        }
+        auto addr = ParseIntArg(tokens[2]);
+        if (!addr) { std::cout << "error: could not parse address\n"; return; }
+
+        std::vector<uint8_t> bytes;
+        if (tokens[3] == "hex") {
+            if (tokens.size() < 5) { std::cout << "usage: patch install <name> <addr> hex <hexbytes>\n"; return; }
+            auto parsed = HexToBytes(tokens[4]);
+            if (!parsed) { std::cout << "error: could not parse hex bytes\n"; return; }
+            bytes = *parsed;
+        } else if (tokens[3] == "asm") {
+            std::vector<std::string> asmTokens(tokens.begin() + 4, tokens.end());
+            std::string asmErr;
+            auto parsed = AssembleLine(asmTokens, *addr, &asmErr);
+            if (!parsed) { std::cout << "error: " << asmErr << "\n"; return; }
+            bytes = *parsed;
+        } else {
+            std::cout << "error: expected 'hex' or 'asm' after the address\n";
+            return;
+        }
+
+        std::string err;
+        bool ok = m_patch.Install(tokens[1], *addr, bytes, &err);
+        std::cout << (ok ? ("installed (" + BytesToHex(bytes) + ")") : ("error: " + err)) << "\n";
+        return;
+    }
+
+    if (sub == "revert" || sub == "reinstall") {
+        if (tokens.size() < 2) { std::cout << "usage: patch " << sub << " <name>\n"; return; }
+        std::string err;
+        bool ok = sub == "revert" ? m_patch.Revert(tokens[1], &err) : m_patch.Reinstall(tokens[1], &err);
+        std::cout << (ok ? "ok" : ("error: " + err)) << "\n";
+        return;
+    }
+
+    if (sub == "rm") {
+        if (tokens.size() < 2) { std::cout << "usage: patch rm <name>\n"; return; }
+        std::cout << (m_patch.Remove(tokens[1]) ? "removed" : "error: no such patch") << "\n";
+        return;
+    }
+
+    if (sub == "list") {
+        auto entries = m_patch.List();
+        for (auto& e : entries) {
+            std::cout << (e.installed ? "[on]  " : "[off] ") << e.name << "  addr=" << FormatAddress(e.address)
+                       << "  new=" << BytesToHex(e.newBytes) << "  orig=" << BytesToHex(e.originalBytes) << "\n";
+        }
+        std::cout << entries.size() << " patch(es)\n";
+        return;
+    }
+
+    if (sub == "save") {
+        if (tokens.size() < 2) { std::cout << "usage: patch save <file.json>\n"; return; }
+        std::cout << (m_patch.SaveToFile(tokens[1]) ? "saved" : "error: could not write file") << "\n";
+        return;
+    }
+
+    if (sub == "load") {
+        if (tokens.size() < 2) { std::cout << "usage: patch load <file.json>\n"; return; }
+        std::string err;
+        bool ok = m_patch.LoadFromFile(tokens[1], &err);
+        std::cout << (ok ? "loaded (use 'patch reinstall <name>' to apply)" : ("error: " + err)) << "\n";
+        return;
+    }
+
+    std::cout << "error: unknown patch subcommand '" << sub << "'\n";
+}
+
+void Shell::CmdWatch(const std::vector<std::string>& tokens) {
+    if (tokens.size() < 2) {
+        std::cout << "usage: watch <type> <addr> [count=20] [intervalMs=500]\n";
+        return;
+    }
+    auto type = ParseValueType(tokens[0]);
+    if (!type) { std::cout << "error: unknown type '" << tokens[0] << "'\n"; return; }
+
+    std::string err;
+    auto addr = ResolveAddress(m_client, tokens[1], &err);
+    if (!addr) { std::cout << "error: " << err << "\n"; return; }
+
+    int count = 20;
+    int intervalMs = 500;
+    if (tokens.size() >= 3) { if (auto v = ParseIntArg(tokens[2])) count = static_cast<int>(*v); }
+    if (tokens.size() >= 4) { if (auto v = ParseIntArg(tokens[3])) intervalMs = static_cast<int>(*v); }
+
+    for (int i = 0; i < count; ++i) {
+        auto val = ReadTyped(m_client, *addr, *type);
+        std::cout << "[" << (i + 1) << "/" << count << "] " << FormatAddress(*addr) << " = "
+                   << (val ? val->ToString() : std::string("??")) << "\n";
+        if (i + 1 < count) std::this_thread::sleep_for(std::chrono::milliseconds(intervalMs));
+    }
+}
+
 bool Shell::Dispatch(const std::vector<std::string>& tokens) {
     if (tokens.empty()) return true;
     if (!tokens[0].empty() && tokens[0][0] == '#') return true; // comment line (script mode)
@@ -578,6 +807,10 @@ bool Shell::Dispatch(const std::vector<std::string>& tokens) {
     if (cmd == "consoles") { CmdConsoles(rest); return true; }
     if (cmd == "connect") { CmdConnect(rest); return true; }
     if (cmd == "sleep") { CmdSleep(rest); return true; }
+    if (cmd == "discover") { CmdDiscover(rest); return true; }
+    if (cmd == "asm") { CmdAsm(rest); return true; }
+    if (cmd == "patch") { CmdPatch(rest); return true; }
+    if (cmd == "watch") { CmdWatch(rest); return true; }
 
     // Unknown local command: forward it verbatim as a raw XBDM command so
     // the shell stays useful for commands it doesn't specifically wrap.

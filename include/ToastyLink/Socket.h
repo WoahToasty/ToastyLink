@@ -18,6 +18,17 @@ public:
     // errorOut (if non-null) receives a human-readable message.
     bool Connect(const std::string& host, uint16_t port, std::string* errorOut = nullptr);
 
+    // Like Connect(), but bounded to timeoutMs regardless of the OS's own
+    // (often much longer) TCP connect timeout. Used for LAN discovery,
+    // where most addresses probed have nothing listening and a normal
+    // connect() can otherwise take many seconds to fail.
+    bool ConnectWithTimeout(const std::string& host, uint16_t port, int timeoutMs,
+                             std::string* errorOut = nullptr);
+
+    // Bounds subsequent RecvSome()/ReadLine() calls to timeoutMs; a timed
+    // out read returns as if the connection had errored (RecvSome() < 0).
+    void SetReceiveTimeout(int timeoutMs);
+
     void Close();
     bool IsOpen() const { return m_open; }
 

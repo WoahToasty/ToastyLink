@@ -98,7 +98,7 @@ const char* GetEnvVar(const char* name) { return std::getenv(name); }
 #endif
 } // namespace
 
-std::string ConsoleBook::DefaultPath() {
+std::string ConsoleBook::ConfigDir() {
     std::filesystem::path home;
 #ifdef _WIN32
     const char* profile = GetEnvVar("USERPROFILE");
@@ -107,7 +107,11 @@ std::string ConsoleBook::DefaultPath() {
     const char* homeEnv = GetEnvVar("HOME");
     home = homeEnv ? std::filesystem::path(homeEnv) : std::filesystem::path(".");
 #endif
-    return (home / ".toastylink" / "consoles.json").string();
+    return (home / ".toastylink").string();
+}
+
+std::string ConsoleBook::DefaultPath() {
+    return (std::filesystem::path(ConfigDir()) / "consoles.json").string();
 }
 
 } // namespace tl

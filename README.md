@@ -26,13 +26,23 @@ result.
 - **A real freeze/trainer engine** (`freeze`) — named entries with a
   literal address or pointer chain, continuously rewritten by a
   background thread, saved and loaded as small **JSON cheat-table files**
-  you can hand to someone else running ToastyLink
+  you can hand to someone else running ToastyLink, or auto-saved/loaded
+  under a name derived from whatever title is currently running
+  (`freeze autosave` / `freeze autoload`)
+- **Toggleable code patches with a tiny built-in PPC/Xenon assembler**
+  (`patch`, `asm`) — install writes new bytes at an address and remembers
+  the originals so it can be reverted exactly; `asm` hand-assembles
+  `nop`/`blr`/`b`/`bl`/`li` so common patches (skip a check, redirect a
+  call) don't need an external toolchain
 - **AOB (array-of-bytes) pattern scanning** with wildcards, over a range
   or the whole mapped address space
+- **LAN console discovery** (`discover`) — probes a subnet for anything
+  answering on the XBDM port so you don't have to go find the console's
+  IP yourself
 - Module/thread/memory-region listing, filesystem browsing
-  (`dirlist`/`mkdir`/`delete`), best-effort on-screen `notify`, and a
-  console address book so you can `connect myrgh` instead of memorizing
-  an IP
+  (`dirlist`/`mkdir`/`delete`), best-effort on-screen `notify`, a live
+  `watch` view for one value, and a console address book so you can
+  `connect myrgh` instead of memorizing an IP
 - Batch scripting (`--script file.txt`) so a whole setup — attach,
   resolve pointers, load a cheat table, start freezing — is one command
 - Raw XBDM passthrough for anything without a dedicated wrapper — the
@@ -91,7 +101,15 @@ toastylink 192.168.1.50 --script trainer.txt
 toastylink myrgh -- dbgname
 ```
 
-### Quick tour: finding and freezing a value
+### Quick tour: find the console, then find and freeze a value
+
+```
+toastylink> discover 192.168.1
+scanning 192.168.1.1-254 on port 730...
+1 console(s) found:
+  192.168.1.50  (201- connected)
+tip: 'connect 192.168.1.50' or 'consoles add <name> 192.168.1.50'
+```
 
 ```
 toastylink> vscan new i32 0x82000000 0x200000 exact 100
@@ -134,10 +152,52 @@ offset reads the pointer at the current address and adds the offset,
 producing the next address to dereference (or, on the last offset, the
 final target address).
 
+Once you're happy with a set of frozen values, `freeze autosave` writes it
+under a name derived from the running title (its name plus its main
+module's checksum/timestamp), so `freeze autoload` on a later session
+picks it back up automatically without you tracking a filename.
+
+### Quick tour: patching code instead of freezing a value
+
+Freezing rewrites a value forever; sometimes you'd rather patch the
+instruction that checks it once, so nothing has to keep re-writing it.
+`asm` hand-assembles the handful of PowerPC instructions this comes up
+for constantly:
+
+```
+toastylink> asm nop
+60000000
+toastylink> asm b 0x82001000 0x82001010
+48000010
+```
+
+`patch install` reads and remembers the original bytes before writing, so
+`patch revert` restores them exactly:
+
+```
+toastylink> patch install skipcheck 0x82001000 asm nop
+installed (60000000)
+toastylink> patch list
+[on]  skipcheck  addr=0x82001000  new=60000000  orig=7C0802A6
+toastylink> patch revert skipcheck
+ok
+toastylink> patch reinstall skipcheck
+ok
+toastylink> patch save mytitle_patches.json
+saved
+```
+
+`patch install <name> <addr> asm b <target>` / `bl <target>` compute the
+branch relative to `<addr>` (where the patch itself lives) automatically.
+`patch load` never re-applies patches by itself — call `patch reinstall
+<name>` for each one you actually want live, so loading a file is never a
+silent write.
+
 ### Command reference
 
 | Command | Description |
 |---|---|
+| `discover <subnet-prefix>` | Find XBDM consoles on your LAN, e.g. `discover 192.168.1` |
 | `connect <ip\|nickname> [port]` | Disconnect and connect to a different console |
 | `consoles add/list/rm` | Manage the saved console address book |
 | `dbgname` | Show the console's debug name |
@@ -150,10 +210,13 @@ final target address).
 | `setmem <addr> <hexbytes>` | Write raw bytes |
 | `read <type> <addr>` | Typed read; `<addr>` may be a pointer chain |
 | `write <type> <addr> <value>` | Typed write; `<addr>` may be a pointer chain |
+| `watch <type> <addr> [count] [ms]` | Repeatedly re-read a value (default 20x @ 500ms) |
 | `scan <addr> <len> <pattern>` | AOB scan a range, e.g. `scan 0x82000000 0x10000 48 65 ?? 6F` |
 | `scanall <pattern>` | AOB scan every mapped region |
 | `vscan new/next/list/reset` | Progressive value scan (see above) |
-| `freeze add/rm/enable/disable/list/start/stop/save/load` | Trainer engine (see above) |
+| `freeze add/rm/enable/disable/list/start/stop/save/load/autosave/autoload` | Trainer engine (see above) |
+| `asm nop\|blr\|b\|bl\|li` | Hand-assemble one PPC instruction, print its bytes |
+| `patch install/revert/reinstall/rm/list/save/load` | Toggleable code patches (see above) |
 | `dirlist <path>` (alias `ls`) | Browse a drive/directory |
 | `mkdir <path>` | Create a directory |
 | `delete <path> [dir]` (alias `rm`) | Delete a file or directory |
@@ -220,7 +283,22 @@ table, start freezing) is reproducible as one file.
   moving) and rewrites its value on an interval; entries persist as JSON
   via a small hand-rolled parser/writer (`Json.h`/`.cpp`, no external
   dependency).
-- **`ConsoleBook`** — a JSON-backed nickname → IP/port address book.
+- **`ConsoleBook`** — a JSON-backed nickname → IP/port address book, and
+  the base directory for auto-saved cheat tables.
+- **`Assembler`** — hand-assembles `nop`/`blr`/`b`/`bl`/`li` using the
+  fixed PowerPC ISA encodings; branch displacements outside the 24-bit
+  (+/-32MB) field are rejected rather than silently truncated.
+- **`PatchEngine`** — install/revert/reinstall for named byte patches;
+  reads and stores the original bytes before ever writing, so a patch is
+  always exactly reversible. Persists as JSON like cheat tables, but
+  never re-applies a loaded patch automatically.
+- **`Discovery`** — probes TCP port 730 across a subnet with a bounded
+  per-host timeout (via a non-blocking connect + `select`, not the OS's
+  much longer default TCP timeout) across a small thread pool, and
+  reports any host that answers with an XBDM-shaped greeting line. Not a
+  protocol-specific broadcast discovery scheme — there's no XBDM
+  discovery packet format this project could implement with confidence,
+  so it does the honest equivalent instead: a banner probe.
 - **`Shell`** — the REPL / one-shot / batch-script command dispatcher.
 
 ## Scope and intent
