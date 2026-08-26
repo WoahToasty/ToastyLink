@@ -1,14 +1,14 @@
 // Interactive REPL and single-shot command dispatcher shared by both
-// invocation modes (`xenonlink <ip>` for the REPL, `xenonlink <ip> <cmd...>`
+// invocation modes (`toastylink <ip>` for the REPL, `toastylink <ip> <cmd...>`
 // to run one command and exit).
 #pragma once
 
 #include <string>
 #include <vector>
 
-#include "XenonLink/XbdmClient.h"
+#include "ToastyLink/XbdmClient.h"
 
-namespace xl {
+namespace tl {
 
 class Shell {
 public:
@@ -39,4 +39,4 @@ private:
 
 std::vector<std::string> Tokenize(const std::string& line);
 
-} // namespace xl
+} // namespace tl

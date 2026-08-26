@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace xl {
+namespace tl {
 
 // One byte of a search pattern: either a concrete value to match, or a
 // wildcard ("??") that matches anything.
@@ -37,4 +37,4 @@ std::optional<uint64_t> ParseIntArg(const std::string& text);
 // the value needs them).
 std::string FormatAddress(uint64_t addr);
 
-} // namespace xl
+} // namespace tl

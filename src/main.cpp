@@ -1,10 +1,10 @@
-// XenonLink -- a from-scratch C++ client for the XBDM debug protocol used
+// ToastyLink -- a from-scratch C++ client for the XBDM debug protocol used
 // by Xbox 360 dashboards/kernels with debugging enabled (RGH/JTAG consoles
 // running Dashlaunch or an equivalent softmod, or devkit-mode consoles).
 //
 // Usage:
-//   xenonlink <console-ip> [port]              interactive shell
-//   xenonlink <console-ip> [port] -- <command...>   run one command, print, exit
+//   toastylink <console-ip> [port]              interactive shell
+//   toastylink <console-ip> [port] -- <command...>   run one command, print, exit
 //
 // See README.md for setup notes and the full command list ('help' inside
 // the shell also lists them).
@@ -13,15 +13,15 @@
 #include <string>
 #include <vector>
 
-#include "XenonLink/Shell.h"
-#include "XenonLink/Socket.h"
-#include "XenonLink/XbdmClient.h"
+#include "ToastyLink/Shell.h"
+#include "ToastyLink/Socket.h"
+#include "ToastyLink/XbdmClient.h"
 
 namespace {
 
 void PrintUsage(const char* argv0) {
     std::cout <<
-        "XenonLink - C++ XBDM client for Xbox 360 RGH/JTAG consoles\n\n"
+        "ToastyLink - C++ XBDM client for Xbox 360 RGH/JTAG consoles\n\n"
         "Usage:\n"
         "  " << argv0 << " <console-ip> [port]                interactive shell (default port 730)\n"
         "  " << argv0 << " <console-ip> [port] -- <command...> run one command and exit\n\n"
@@ -72,20 +72,20 @@ int main(int argc, char** argv) {
     }
 
     std::string sockErr;
-    if (!xl::InitSockets(&sockErr)) {
+    if (!tl::InitSockets(&sockErr)) {
         std::cerr << "socket init failed: " << sockErr << "\n";
         return 1;
     }
 
-    xl::XbdmClient client;
+    tl::XbdmClient client;
     std::cout << "connecting to " << host << ":" << port << "...\n";
     if (!client.Connect(host, port)) {
         std::cerr << "connect failed: " << client.LastError() << "\n";
-        xl::ShutdownSockets();
+        tl::ShutdownSockets();
         return 1;
     }
 
-    xl::Shell shell(client);
+    tl::Shell shell(client);
     int exitCode = 0;
     if (oneShotCommand.empty()) {
         shell.Run();
@@ -94,6 +94,6 @@ int main(int argc, char** argv) {
     }
 
     client.Disconnect();
-    xl::ShutdownSockets();
+    tl::ShutdownSockets();
     return exitCode;
 }

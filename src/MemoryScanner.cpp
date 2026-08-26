@@ -1,8 +1,8 @@
-#include "XenonLink/MemoryScanner.h"
+#include "ToastyLink/MemoryScanner.h"
 
 #include <algorithm>
 
-namespace xl {
+namespace tl {
 
 namespace {
 
@@ -93,4 +93,4 @@ std::vector<uint64_t> MemoryScanner::ScanAllRegions(const std::vector<PatternByt
     return matches;
 }
 
-} // namespace xl
+} // namespace tl

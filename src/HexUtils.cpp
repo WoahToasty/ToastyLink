@@ -1,10 +1,10 @@
-#include "XenonLink/HexUtils.h"
+#include "ToastyLink/HexUtils.h"
 
 #include <cctype>
 #include <cstdio>
 #include <sstream>
 
-namespace xl {
+namespace tl {
 
 namespace {
 
@@ -99,4 +99,4 @@ std::string FormatAddress(uint64_t addr) {
     return std::string(buf);
 }
 
-} // namespace xl
+} // namespace tl

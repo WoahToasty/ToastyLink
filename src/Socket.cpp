@@ -1,4 +1,4 @@
-#include "XenonLink/Socket.h"
+#include "ToastyLink/Socket.h"
 
 #ifdef _WIN32
     #ifndef WIN32_LEAN_AND_MEAN
@@ -19,7 +19,7 @@
     static constexpr socket_t kInvalidSocket = -1;
 #endif
 
-namespace xl {
+namespace tl {
 
 bool InitSockets(std::string* errorOut) {
 #ifdef _WIN32
@@ -155,4 +155,4 @@ bool TcpSocket::ReadLine(std::string& outLine) {
     }
 }
 
-} // namespace xl
+} // namespace tl

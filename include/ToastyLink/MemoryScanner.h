@@ -7,10 +7,10 @@
 #include <functional>
 #include <vector>
 
-#include "XenonLink/HexUtils.h"
-#include "XenonLink/XbdmClient.h"
+#include "ToastyLink/HexUtils.h"
+#include "ToastyLink/XbdmClient.h"
 
-namespace xl {
+namespace tl {
 
 // Called periodically during a scan with (bytesScanned, bytesTotal) so a
 // caller can render progress. May be null.
@@ -39,4 +39,4 @@ private:
     XbdmClient& m_client;
 };
 
-} // namespace xl
+} // namespace tl

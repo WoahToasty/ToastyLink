@@ -1,13 +1,13 @@
-#include "XenonLink/Shell.h"
+#include "ToastyLink/Shell.h"
 
 #include <cstdio>
 #include <iostream>
 #include <sstream>
 
-#include "XenonLink/HexUtils.h"
-#include "XenonLink/MemoryScanner.h"
+#include "ToastyLink/HexUtils.h"
+#include "ToastyLink/MemoryScanner.h"
 
-namespace xl {
+namespace tl {
 
 std::vector<std::string> Tokenize(const std::string& line) {
     std::vector<std::string> out;
@@ -261,7 +261,7 @@ void Shell::Run() {
     std::cout << "Type 'help' for commands, 'quit' to exit.\n";
     std::string line;
     for (;;) {
-        std::cout << "xenonlink> " << std::flush;
+        std::cout << "toastylink> " << std::flush;
         if (!std::getline(std::cin, line)) break;
         auto tokens = Tokenize(line);
         if (!Dispatch(tokens)) break;
@@ -272,4 +272,4 @@ void Shell::Run() {
     }
 }
 
-} // namespace xl
+} // namespace tl

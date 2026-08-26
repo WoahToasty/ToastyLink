@@ -27,9 +27,9 @@
 #include <string>
 #include <vector>
 
-#include "XenonLink/Socket.h"
+#include "ToastyLink/Socket.h"
 
-namespace xl {
+namespace tl {
 
 struct XbdmResponse {
     int code = 0;                    // e.g. 200, 202, 410
@@ -125,4 +125,4 @@ private:
     void ReadMultilineBody(XbdmResponse& resp);
 };
 
-} // namespace xl
+} // namespace tl

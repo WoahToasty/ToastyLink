@@ -1,12 +1,12 @@
-#include "XenonLink/XbdmClient.h"
+#include "ToastyLink/XbdmClient.h"
 
 #include <algorithm>
 #include <cctype>
 #include <sstream>
 
-#include "XenonLink/HexUtils.h"
+#include "ToastyLink/HexUtils.h"
 
-namespace xl {
+namespace tl {
 
 namespace {
 
@@ -269,4 +269,4 @@ bool XbdmClient::Reboot(const std::string& mode) {
     return resp.success;
 }
 
-} // namespace xl
+} // namespace tl

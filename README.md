@@ -1,11 +1,11 @@
-# XenonLink
+# ToastyLink
 
 A from-scratch C++17 client for **XBDM** (Xbox Debug Monitor), the network
 control/debug protocol exposed by Xbox 360 kernels and dashboards that have
 debugging enabled. On a softmodded console (RGH/JTAG running a custom
 dashboard such as Aurora, Freestyle Dash, or XeXMenu with Dashlaunch) this
 is the same class of protocol tools like Xbox 360 Neighborhood or Cheat
-Engine 360 talk to — XenonLink implements the wire protocol itself, in
+Engine 360 talk to — ToastyLink implements the wire protocol itself, in
 plain C++, with no third-party SDK.
 
 It gives you an interactive shell (and a scriptable one-shot CLI mode) for:
@@ -22,13 +22,13 @@ It gives you an interactive shell (and a scriptable one-shot CLI mode) for:
 
 No game-specific memory offsets are baked in anywhere. Offsets are
 build-specific and go stale the moment a title updates, so instead of
-shipping a pile of addresses that would rot on day one, XenonLink gives
+shipping a pile of addresses that would rot on day one, ToastyLink gives
 you the primitives (`getmem`, `setmem`, `scan`) to find and use your own.
 
 ## Why this exists
 
 Most public XBDM tooling is old, closed-source, C#/.NET, or bundled into
-a much larger GUI app. XenonLink is a small, readable, single-purpose C++
+a much larger GUI app. ToastyLink is a small, readable, single-purpose C++
 implementation of the protocol itself — useful on its own, and as a
 reference for anyone writing their own Xbox 360 tooling.
 
@@ -47,7 +47,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ```
 
-This produces `xenonlink` (or `xenonlink.exe` on Windows) in `build/`.
+This produces `toastylink` (or `toastylink.exe` on Windows) in `build/`.
 Tested with MSVC (Visual Studio 2022 toolset) on Windows; it also builds
 clean with GCC/Clang on Linux/macOS since it only uses the standard
 library plus BSD sockets / Winsock.
@@ -56,11 +56,11 @@ library plus BSD sockets / Winsock.
 
 ```bash
 # Interactive shell
-xenonlink 192.168.1.50
+toastylink 192.168.1.50
 
 # One-shot: run a single command and exit
-xenonlink 192.168.1.50 -- dbgname
-xenonlink 192.168.1.50 730 -- getmem 0x82000000 0x100
+toastylink 192.168.1.50 -- dbgname
+toastylink 192.168.1.50 730 -- getmem 0x82000000 0x100
 ```
 
 ### Shell commands

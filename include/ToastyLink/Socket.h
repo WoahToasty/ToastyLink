@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <string>
 
-namespace xl {
+namespace tl {
 
 class TcpSocket {
 public:
@@ -50,4 +50,4 @@ private:
 bool InitSockets(std::string* errorOut = nullptr);
 void ShutdownSockets();
 
-} // namespace xl
+} // namespace tl
