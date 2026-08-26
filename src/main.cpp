@@ -18,13 +18,14 @@
 #include "ToastyLink/ConsoleBook.h"
 #include "ToastyLink/Shell.h"
 #include "ToastyLink/Socket.h"
+#include "ToastyLink/Version.h"
 #include "ToastyLink/XbdmClient.h"
 
 namespace {
 
 void PrintUsage(const char* argv0) {
     std::cout <<
-        "ToastyLink - C++ XBDM trainer/debug toolkit for Xbox 360 RGH/JTAG consoles\n\n"
+        "ToastyLink " << tl::kVersion << " - C++ XBDM trainer/debug toolkit for Xbox 360 RGH/JTAG consoles\n\n"
         "Usage:\n"
         "  " << argv0 << " <console-ip-or-nickname> [port]                  interactive shell (default port 730)\n"
         "  " << argv0 << " <console-ip-or-nickname> [port] -- <command...>  run one command and exit\n"
@@ -44,6 +45,11 @@ int main(int argc, char** argv) {
     if (argc < 2) {
         PrintUsage(argv[0]);
         return 1;
+    }
+
+    if (std::string(argv[1]) == "--version" || std::string(argv[1]) == "-v") {
+        std::cout << "ToastyLink " << tl::kVersion << "\n";
+        return 0;
     }
 
     std::string hostArg = argv[1];
