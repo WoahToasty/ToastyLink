@@ -42,7 +42,7 @@ std::vector<uint64_t> MemoryScanner::ScanRange(uint64_t start, uint64_t length,
             // Unreadable region (module unmapped, console busy, etc.) --
             // skip forward rather than aborting the whole scan.
             uint64_t advance = std::min<uint64_t>(readLen, remaining);
-            pos += advance;
+            pos += (advance > 0 ? advance : 1); // never spin
             if (progress) progress(pos - start, length);
             continue;
         }
@@ -56,13 +56,21 @@ std::vector<uint64_t> MemoryScanner::ScanRange(uint64_t start, uint64_t length,
             }
         }
 
-        if (progress) progress(std::min<uint64_t>(pos + readLen - start, length), length);
-
-        // Step forward by (readLen - overlap) so a match straddling the
-        // chunk boundary is still found in the next iteration.
-        uint64_t step = (readLen > overlap) ? (readLen - overlap) : readLen;
-        if (step == 0) step = readLen; // guard against pathological chunkSize
+        // Step by what the console ACTUALLY returned, not by what was
+        // requested -- XBDM implementations legitimately cap a single
+        // getmem, and stepping by the requested length would silently
+        // skip every byte that never arrived. The overlap keeps a match
+        // straddling the boundary findable in the next iteration.
+        uint64_t step;
+        if (n > overlap) {
+            step = n - overlap;
+        } else {
+            step = (n > 0) ? n : readLen;
+        }
+        if (step == 0) step = 1; // guarantee forward progress
         pos += step;
+
+        if (progress) progress(std::min<uint64_t>(pos - start, length), length);
     }
 
     return matches;

@@ -11,6 +11,11 @@ namespace tl {
 
 namespace {
 
+// Splits on ',' WITHOUT discarding empty components, so a malformed
+// expression like "0x82000000," or "a,,b" surfaces as an empty component
+// the caller rejects. Silently dropping them would quietly demote a
+// mistyped pointer chain to a plain literal address -- the kind of
+// misinterpretation that writes to entirely the wrong memory.
 std::vector<std::string> SplitComma(const std::string& s) {
     std::vector<std::string> out;
     std::string cur;
@@ -22,7 +27,7 @@ std::vector<std::string> SplitComma(const std::string& s) {
             cur.push_back(c);
         }
     }
-    if (!cur.empty()) out.push_back(cur);
+    out.push_back(cur);
     return out;
 }
 

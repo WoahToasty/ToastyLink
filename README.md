@@ -54,6 +54,28 @@ pile of addresses that would rot on day one, ToastyLink gives you the
 primitives — `scan`, `vscan`, pointer chains — to find and pin down your
 own, and a file format (the cheat table) to save and share what you find.
 
+## Status — please read before trusting it with your console
+
+The code builds clean (zero warnings at `/W4 /permissive-`, MSVC/GCC/Clang)
+and every feature is exercised by an automated test suite against a
+**mock XBDM server** that emulates the protocol, including realistic
+awkwardness like capping how much a single `getmem` returns and reporting
+unmapped bytes.
+
+**It has not yet been tested against a physical Xbox 360.** That's the
+honest limitation: the mock encodes my understanding of the protocol, so
+if that understanding is wrong somewhere, the mock agrees with the client
+and the tests pass anyway. The framing (status lines, multiline bodies,
+the `.` terminator) is well documented and I'm confident in it; exact
+parameter spelling for individual commands is the part most likely to
+differ on real hardware.
+
+If something doesn't work on your console, `raw <command>` prints the
+console's exact reply — that's the fastest way to see what your XBDM
+build actually expects, and it makes for a great bug report. Reads are
+harmless; be deliberate with `setmem`, `patch`, and `freeze`, which write
+to a running title.
+
 ## Why this exists
 
 Most public XBDM tooling is old, closed-source, C#/.NET, or bundled into
@@ -84,6 +106,22 @@ cmake --build build --config Release
 This produces `toastylink` (or `toastylink.exe` on Windows) in `build/`.
 Tested with MSVC (Visual Studio 2022 toolset) on Windows; it also builds
 clean with GCC/Clang on Linux/macOS.
+
+### Running the tests
+
+No console required — the suite drives the real binary against a mock
+XBDM server over a real socket (Python 3, no packages needed):
+
+```bash
+python tests/run_tests.py build/toastylink
+```
+
+86 checks covering exact round-trips for every value type at its
+boundaries, pointer-chain resolution, scan correctness across chunk
+boundaries, the patch lifecycle, the freeze engine actually holding a
+value against a competing write, and every assembler encoding. Each suite
+runs three times against different `getmem` size caps, because a console
+capping a single read is exactly the condition that hides chunking bugs.
 
 ## Usage
 

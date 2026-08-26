@@ -114,13 +114,20 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    tl::Shell shell(client);
-    if (!scriptPath.empty()) {
-        shell.RunScript(scriptPath);
-    } else if (oneShotCommand.empty()) {
-        shell.Run();
-    } else {
-        shell.Dispatch(oneShotCommand);
+    // Scoped so the Shell -- and with it the FreezeEngine's background
+    // thread -- is fully destroyed and joined BEFORE the socket layer is
+    // torn down. Calling WSACleanup() while that thread is still doing
+    // socket I/O is undefined behaviour, even though it often appears to
+    // work.
+    {
+        tl::Shell shell(client);
+        if (!scriptPath.empty()) {
+            shell.RunScript(scriptPath);
+        } else if (oneShotCommand.empty()) {
+            shell.Run();
+        } else {
+            shell.Dispatch(oneShotCommand);
+        }
     }
 
     client.Disconnect();

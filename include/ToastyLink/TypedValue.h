@@ -28,10 +28,24 @@ struct TypedValue {
     ValueType type = ValueType::I32;
     std::vector<uint8_t> bytes;
 
-    double AsDouble() const;       // numeric interpretation, for compare/display
+    bool IsFloat() const { return type == ValueType::F32 || type == ValueType::F64; }
+    bool IsSigned() const;
+
+    // Exact integer views. Only meaningful for integer types -- never
+    // route a 64-bit integer through AsDouble(), which has a 53-bit
+    // mantissa and silently mangles large values.
+    int64_t AsInt64() const;
+    uint64_t AsUInt64() const;
+
+    double AsDouble() const;       // float interpretation (exact only for F32/F64)
     std::string ToString() const;  // human-readable decimal/float text
     bool EqualsBytes(const TypedValue& other) const;
 };
+
+// Three-way compare of two same-typed values: -1 / 0 / +1. Integer types
+// are compared exactly (no double round-trip); float types compare as
+// doubles. Returns 0 if the types differ.
+int CompareTypedValues(const TypedValue& a, const TypedValue& b);
 
 // Parses human-entered text ("123", "-5", "3.14") into a big-endian
 // TypedValue of the given type. Returns nullopt if out of range or

@@ -232,8 +232,12 @@ std::optional<std::vector<MemoryRegion>> XbdmClient::WalkMemory() {
 }
 
 std::optional<std::vector<MemoryByte>> XbdmClient::GetMemory(uint64_t address, uint32_t length) {
+    // `length` is sent in decimal deliberately: a decimal integer parses
+    // correctly under any integer parser, whereas a 0x-prefixed value
+    // relies on the console's parser handling the prefix for this field.
+    // Addresses stay 0x-prefixed, which is the conventional form for them.
     std::ostringstream cmd;
-    cmd << "getmem addr=" << FormatAddress(address) << " length=0x" << std::hex << length;
+    cmd << "getmem addr=" << FormatAddress(address) << " length=" << std::dec << length;
     XbdmResponse resp = SendCommand(cmd.str());
     if (!resp.success) return std::nullopt;
 

@@ -34,14 +34,28 @@ size_t ValueScanner::FirstScan(uint64_t start, uint64_t length, ValueType type,
         uint32_t readLen = static_cast<uint32_t>(std::min<uint64_t>(chunkSize, remaining));
         auto bytes = m_client.GetMemory(pos, readLen);
         if (!bytes || bytes->empty()) {
-            pos += readLen;
+            pos += (readLen > 0 ? readLen : 1); // never spin on a zero-length read
             if (progress) progress(pos - start, length);
             continue;
         }
 
         const size_t n = bytes->size();
         const size_t step = alignedOnly ? valSize : 1;
-        for (size_t i = 0; i + valSize <= n; i += step) {
+
+        // Chunks overlap by (valSize - 1) so a value straddling a boundary
+        // isn't missed, which means a chunk's start address is usually NOT
+        // aligned to valSize relative to `start`. For an aligned scan the
+        // candidate offsets therefore have to be derived from the absolute
+        // address, not from offset 0 of the chunk -- otherwise every chunk
+        // after the first scans at the wrong phase, reporting misaligned
+        // addresses and missing the genuinely aligned values entirely.
+        size_t i0 = 0;
+        if (alignedOnly) {
+            uint64_t misalign = (pos - start) % valSize;
+            if (misalign != 0) i0 = static_cast<size_t>(valSize - misalign);
+        }
+
+        for (size_t i = i0; i + valSize <= n; i += step) {
             std::vector<uint8_t> raw;
             raw.reserve(valSize);
             bool mapped = true;
@@ -62,12 +76,21 @@ size_t ValueScanner::FirstScan(uint64_t start, uint64_t length, ValueType type,
             m_candidates.push_back(std::move(c));
         }
 
-        if (progress) progress(std::min<uint64_t>(pos + readLen - start, length), length);
-
-        uint64_t overlap = valSize > 0 ? valSize - 1 : 0;
-        uint64_t adv = (readLen > overlap) ? (readLen - overlap) : readLen;
-        if (adv == 0) adv = readLen;
+        // Advance by what the console ACTUALLY returned, not by what was
+        // requested: XBDM implementations legitimately cap how much a
+        // single getmem returns, and advancing by the requested length
+        // would silently skip every byte that didn't arrive.
+        const uint64_t overlap = valSize - 1;
+        uint64_t adv;
+        if (n > overlap) {
+            adv = n - overlap; // keep overlap so a straddling value isn't missed
+        } else {
+            adv = (n > 0) ? n : readLen; // degenerate short read: just make progress
+        }
+        if (adv == 0) adv = 1; // guarantee forward progress, never spin
         pos += adv;
+
+        if (progress) progress(std::min<uint64_t>(pos - start, length), length);
     }
 
     return m_candidates.size();
@@ -146,8 +169,11 @@ size_t ValueScanner::NextScan(NextScanMode mode, const std::optional<TypedValue>
         switch (mode) {
             case NextScanMode::Changed: keep = !newVal.EqualsBytes(oldVal); break;
             case NextScanMode::Unchanged: keep = newVal.EqualsBytes(oldVal); break;
-            case NextScanMode::Increased: keep = newVal.AsDouble() > oldVal.AsDouble(); break;
-            case NextScanMode::Decreased: keep = newVal.AsDouble() < oldVal.AsDouble(); break;
+            // Exact three-way compare: comparing via double would misjudge
+            // 64-bit values whose difference falls below a double's
+            // 53-bit mantissa resolution.
+            case NextScanMode::Increased: keep = CompareTypedValues(newVal, oldVal) > 0; break;
+            case NextScanMode::Decreased: keep = CompareTypedValues(newVal, oldVal) < 0; break;
             case NextScanMode::Exact: keep = exactValue && newVal.EqualsBytes(*exactValue); break;
         }
 

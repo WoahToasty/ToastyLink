@@ -1,11 +1,15 @@
 build/
 out/
 cmake-build-*/
+vrel/
+vdbg/
+build-audit/
 *.obj
 *.o
 *.exe
 *.pdb
 *.ilk
+__pycache__/
 .vs/
 .vscode/
 CMakeFiles/

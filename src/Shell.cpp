@@ -22,15 +22,23 @@ namespace tl {
 
 namespace {
 
-void PrintProgress(uint64_t scanned, uint64_t total) {
-    if (total == 0) return;
-    static uint64_t lastPct = 100;
-    uint64_t pct = (scanned * 100) / total;
-    if (pct != lastPct) {
-        lastPct = pct;
-        std::cout << "\r  " << pct << "%   " << std::flush;
+// Percent-progress printer. The "last printed percent" has to live per
+// scan rather than in a function-local static, or state leaks between
+// consecutive scans and the first ticks of a later scan get swallowed.
+class ProgressPrinter {
+public:
+    void operator()(uint64_t scanned, uint64_t total) {
+        if (total == 0) return;
+        uint64_t pct = (scanned * 100) / total;
+        if (pct != m_lastPct) {
+            m_lastPct = pct;
+            std::cout << "\r  " << pct << "%   " << std::flush;
+        }
     }
-}
+
+private:
+    uint64_t m_lastPct = static_cast<uint64_t>(-1);
+};
 
 } // namespace
 
@@ -265,7 +273,7 @@ void Shell::CmdScan(const std::vector<std::string>& tokens) {
 
     MemoryScanner scanner(m_client);
     std::cout << "scanning " << FormatAddress(*addr) << " + " << FormatAddress(*len) << "...\n";
-    auto matches = scanner.ScanRange(*addr, *len, *pattern, PrintProgress);
+    auto matches = scanner.ScanRange(*addr, *len, *pattern, ProgressPrinter{});
     std::cout << "\r" << matches.size() << " match(es):\n";
     for (auto m : matches) std::cout << "  " << FormatAddress(m) << "\n";
 }
@@ -282,7 +290,7 @@ void Shell::CmdScanAll(const std::vector<std::string>& tokens) {
 
     MemoryScanner scanner(m_client);
     std::cout << "scanning all mapped regions (this can take a while)...\n";
-    auto matches = scanner.ScanAllRegions(*pattern, PrintProgress);
+    auto matches = scanner.ScanAllRegions(*pattern, ProgressPrinter{});
     std::cout << "\r" << matches.size() << " match(es):\n";
     for (auto m : matches) std::cout << "  " << FormatAddress(m) << "\n";
 }
@@ -357,7 +365,7 @@ void Shell::CmdVScan(const std::vector<std::string>& tokens) {
 
         std::cout << "scanning " << FormatAddress(*addr) << " + " << FormatAddress(*len) << " as "
                    << ValueTypeName(*type) << "...\n";
-        size_t n = m_scanner.FirstScan(*addr, *len, *type, exact, alignedOnly, PrintProgress);
+        size_t n = m_scanner.FirstScan(*addr, *len, *type, exact, alignedOnly, ProgressPrinter{});
         std::cout << "\r" << n << " candidate(s). Play/change the value, then run 'vscan next ...'.\n";
         return;
     }
@@ -459,6 +467,10 @@ void Shell::CmdFreeze(const std::vector<std::string>& tokens) {
     }
 
     if (sub == "start") {
+        if (m_freeze.IsRunning()) {
+            std::cout << "freeze engine is already running (stop it first to change the interval)\n";
+            return;
+        }
         int interval = 200;
         if (tokens.size() >= 2) {
             if (auto v = ParseIntArg(tokens[1])) interval = static_cast<int>(*v);
@@ -469,6 +481,10 @@ void Shell::CmdFreeze(const std::vector<std::string>& tokens) {
     }
 
     if (sub == "stop") {
+        if (!m_freeze.IsRunning()) {
+            std::cout << "freeze engine is not running\n";
+            return;
+        }
         m_freeze.Stop();
         std::cout << "freeze engine stopped\n";
         return;

@@ -145,6 +145,49 @@ std::optional<TypedValue> ParseTypedValue(ValueType type, const std::string& tex
     return std::nullopt;
 }
 
+bool TypedValue::IsSigned() const {
+    switch (type) {
+        case ValueType::I8:
+        case ValueType::I16:
+        case ValueType::I32:
+        case ValueType::I64: return true;
+        default: return false;
+    }
+}
+
+int64_t TypedValue::AsInt64() const {
+    uint64_t raw = UnpackBE(bytes);
+    switch (type) {
+        case ValueType::I8: return static_cast<int8_t>(raw);
+        case ValueType::I16: return static_cast<int16_t>(raw);
+        case ValueType::I32: return static_cast<int32_t>(raw);
+        case ValueType::I64: return static_cast<int64_t>(raw);
+        default: return static_cast<int64_t>(raw);
+    }
+}
+
+uint64_t TypedValue::AsUInt64() const { return UnpackBE(bytes); }
+
+int CompareTypedValues(const TypedValue& a, const TypedValue& b) {
+    if (a.type != b.type) return 0;
+    if (a.IsFloat()) {
+        double x = a.AsDouble(), y = b.AsDouble();
+        if (x < y) return -1;
+        if (x > y) return 1;
+        return 0;
+    }
+    if (a.IsSigned()) {
+        int64_t x = a.AsInt64(), y = b.AsInt64();
+        if (x < y) return -1;
+        if (x > y) return 1;
+        return 0;
+    }
+    uint64_t x = a.AsUInt64(), y = b.AsUInt64();
+    if (x < y) return -1;
+    if (x > y) return 1;
+    return 0;
+}
+
 double TypedValue::AsDouble() const {
     uint64_t raw = UnpackBE(bytes);
     switch (type) {
@@ -173,21 +216,20 @@ double TypedValue::AsDouble() const {
 
 std::string TypedValue::ToString() const {
     std::ostringstream oss;
-    switch (type) {
-        case ValueType::F32:
-        case ValueType::F64:
-            oss.precision(9);
-            oss << AsDouble();
-            break;
-        case ValueType::I8:
-        case ValueType::I16:
-        case ValueType::I32:
-        case ValueType::I64:
-            oss << static_cast<long long>(AsDouble());
-            break;
-        default:
-            oss << static_cast<unsigned long long>(AsDouble());
-            break;
+    if (IsFloat()) {
+        // Enough significant digits to round-trip the value exactly:
+        // 9 for float, 17 for double. Cheat tables persist values as
+        // this text and re-parse them, so anything less silently
+        // degrades a saved value every save/load cycle.
+        oss.precision(type == ValueType::F32 ? 9 : 17);
+        oss << AsDouble();
+    } else if (IsSigned()) {
+        // Formatted straight from the integer view: routing through
+        // double would silently mangle any value needing more than 53
+        // bits of mantissa (e.g. u64 max came back as 2^63).
+        oss << static_cast<long long>(AsInt64());
+    } else {
+        oss << static_cast<unsigned long long>(AsUInt64());
     }
     return oss.str();
 }
